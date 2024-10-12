@@ -2542,7 +2542,7 @@ func (t *Terminal) renderPreviewSpinner() {
 			t.pwindow.Move(0, pos)
 			if maxWidth > 0 {
 				t.pwindow.CPrint(tui.ColPreviewSpinner, spin)
-				t.pwindow.CPrint(tui.ColInfo.WithAttr(tui.Reverse), string(offsetRunes))
+				// t.pwindow.CPrint(tui.ColInfo.WithAttr(tui.Reverse), string(offsetRunes))
 			}
 		}
 	}
