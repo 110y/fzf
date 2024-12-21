@@ -1442,9 +1442,13 @@ class TestGoFZF < TestBase
     writelines(['=' * 10_000 + '0123456789'])
     [0, 3, 6].each do |off|
       tmux.prepare
-      tmux.send_keys "#{FZF} --hscroll-off=#{off} -q 0 < #{tempname}", :Enter
+      tmux.send_keys "#{FZF} --hscroll-off=#{off} -q 0 --bind space:toggle-hscroll < #{tempname}", :Enter
       tmux.until { |lines| assert lines[-3]&.end_with?((0..off).to_a.join + '··') }
       tmux.send_keys '9'
+      tmux.until { |lines| assert lines[-3]&.end_with?('789') }
+      tmux.send_keys :Space
+      tmux.until { |lines| assert lines[-3]&.end_with?('=··') }
+      tmux.send_keys :Space
       tmux.until { |lines| assert lines[-3]&.end_with?('789') }
       tmux.send_keys :Enter
     end
@@ -2133,7 +2137,11 @@ class TestGoFZF < TestBase
   end
 
   def test_keep_right
-    tmux.send_keys "seq 10000 | #{FZF} --read0 --keep-right --no-multi-line", :Enter
+    tmux.send_keys "seq 10000 | #{FZF} --read0 --keep-right --no-multi-line --bind space:toggle-multi-line", :Enter
+    tmux.until { |lines| assert lines.any_include?('9999␊10000') }
+    tmux.send_keys :Space
+    tmux.until { |lines| assert lines.any_include?('> 1') }
+    tmux.send_keys :Space
     tmux.until { |lines| assert lines.any_include?('9999␊10000') }
   end
 
@@ -2814,13 +2822,13 @@ class TestGoFZF < TestBase
     tmux.send_keys "seq 3 | fzf --height ~100% --border=vertical --preview 'seq {}' --preview-window left,5,border-right --padding 1 --exit-0 --header $'hello\\nworld' --header-lines=2", :Enter
     expected = <<~OUTPUT
       │
-      │  1       │ > 3
-      │  2       │   2
-      │  3       │   1
-      │          │   hello
-      │          │   world
-      │          │   1/1 ─
-      │          │ >
+      │  1     │ > 3
+      │  2     │   2
+      │  3     │   1
+      │        │   hello
+      │        │   world
+      │        │   1/1 ─
+      │        │ >
       │
     OUTPUT
     tmux.until { assert_block(expected, _1) }
@@ -3071,6 +3079,21 @@ class TestGoFZF < TestBase
     tmux.until { |lines| refute_includes lines, '/1/1/' }
     tmux.send_keys :Space
     tmux.until { |lines| assert_includes lines, '/1/1/' }
+  end
+
+  def test_alternative_preview_window_opts
+    tmux.send_keys "seq 10 | #{FZF} --preview-window '~5,2,+0,<100000(~0,+100,wrap,noinfo)' --preview 'seq 1000'", :Enter
+    tmux.until { |lines| assert_equal 10, lines.item_count }
+    tmux.until do |lines|
+      assert_equal ['╭────╮', '│ 10 │', '│ 0  │', '│ 10 │', '│ 1  │'], lines.take(5).map(&:strip)
+    end
+  end
+
+  def test_preview_window_width_exception
+    tmux.send_keys "seq 10 | #{FZF} --scrollbar --preview-window border-left --border --preview 'seq 1000'", :Enter
+    tmux.until do |lines|
+      assert lines[1]&.end_with?(' 1/1000││')
+    end
   end
 
   def test_become
@@ -3735,6 +3758,23 @@ module CompletionTest
     tmux.until { |lines| assert_equal 1, lines.match_count }
     tmux.send_keys :Enter
     tmux.until { |lines| assert_equal 'unset FZFFOOBAR', lines[-1] }
+  end
+
+  def test_completion_in_command_sequence
+    tmux.send_keys 'export FZFFOOBAR=BAZ', :Enter
+    tmux.prepare
+
+    triggers = ['**', '~~', '++', 'ff', '/']
+    triggers.concat(['&', '[', ';', '`']) if instance_of?(TestZsh)
+
+    triggers.each do |trigger|
+      set_var('FZF_COMPLETION_TRIGGER', trigger)
+      command = "echo foo; QUX=THUD unset FZFFOOBR#{trigger}"
+      tmux.send_keys command.sub(/(;|`)$/, '\\\\\1'), :Tab
+      tmux.until { |lines| assert_equal 1, lines.match_count }
+      tmux.send_keys :Enter
+      tmux.until { |lines| assert_equal 'echo foo; QUX=THUD unset FZFFOOBAR', lines[-1] }
+    end
   end
 
   def test_file_completion_unicode

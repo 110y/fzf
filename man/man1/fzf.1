@@ -21,7 +21,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ..
-.TH fzf 1 "Sep 2024" "fzf 0.56.0" "fzf - a command-line fuzzy finder"
+.TH fzf 1 "Dec 2024" "fzf 0.57.0" "fzf - a command-line fuzzy finder"
 
 .SH NAME
 fzf - a command-line fuzzy finder
@@ -805,7 +805,7 @@ e.g. \fBborder\-rounded\fR (border with rounded edges, default),
 * \fB[:+SCROLL[OFFSETS][/DENOM]]\fR determines the initial scroll offset of the
 preview window.
 
-  - \fBSCROLL\fR can be either a numeric integer or a single-field index expression that refers to a numeric integer.
+  - \fBSCROLL\fR can be either a numeric integer or a single-field index expression that refers to a numeric integer or {n} to refer to the zero-based ordinal index of the current item.
 
   - The optional \fBOFFSETS\fR part is for adjusting the base offset. It should be given as a series of signed integers (\fB\-INTEGER\fR or \fB+INTEGER\fR).
 
@@ -1005,8 +1005,8 @@ Determines the behavior of the built-in directory walker that is used when
 .br
 
 .TP
-.B "\-\-walker\-root=DIR"
-The root directory from which to start the built-in directory walker.
+.B "\-\-walker\-root=DIR [...]"
+List of directory names to start the built-in directory walker.
 The default value is the current working directory.
 
 .TP
@@ -1122,9 +1122,6 @@ fzf exports the following environment variables to its child processes.
 .br
 .BR FZF_PORT "            Port number when \-\-listen option is used"
 .br
-
-The following variables are additionally exported to the preview commands.
-
 .BR FZF_PREVIEW_TOP "     Top position of the preview window"
 .br
 .BR FZF_PREVIEW_LEFT "    Left position of the preview window"
@@ -1509,10 +1506,11 @@ A key or an event can be bound to one or more of the following actions.
     \fBshow\-preview\fR
     \fBtoggle\fR                       (\fIright\-click\fR)
     \fBtoggle\-all\fR                   (toggle all matches)
-    \fBtoggle+down\fR                  \fIctrl\-i  (tab)\fR
-    \fBtoggle\-header\fR
     \fBtoggle\-in\fR                    (\fB\-\-layout=reverse*\fR ? \fBtoggle+up\fR : \fBtoggle+down\fR)
     \fBtoggle\-out\fR                   (\fB\-\-layout=reverse*\fR ? \fBtoggle+down\fR : \fBtoggle+up\fR)
+    \fBtoggle\-header\fR
+    \fBtoggle\-hscroll\fR
+    \fBtoggle\-multi\-line\fR
     \fBtoggle\-preview\fR
     \fBtoggle\-preview\-wrap\fR
     \fBtoggle\-search\fR                (toggle search functionality)
@@ -1520,6 +1518,7 @@ A key or an event can be bound to one or more of the following actions.
     \fBtoggle\-track\fR                 (toggle global tracking option (\fB\-\-track\fR))
     \fBtoggle\-track\-current\fR         (toggle tracking of the current item)
     \fBtoggle\-wrap\fR                  \fIctrl\-/\fR  \fIalt\-/\fR
+    \fBtoggle+down\fR                  \fIctrl\-i  (tab)\fR
     \fBtoggle+up\fR                    \fIbtab    (shift\-tab)\fR
     \fBtrack\-current\fR                (track the current item; automatically disabled if focus changes)
     \fBtransform(...)\fR               (transform states using the output of an external command)
