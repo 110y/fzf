@@ -1911,13 +1911,13 @@ func (t *Terminal) printInfo() {
 	case trackCurrent:
 		output += " +t"
 	}
-	if t.multi > 0 {
-		if t.multi == maxMulti {
-			output += fmt.Sprintf(" (%d)", len(t.selected))
-		} else {
-			output += fmt.Sprintf(" (%d/%d)", len(t.selected), t.multi)
-		}
-	}
+	// if t.multi > 0 {
+	//     if t.multi == maxMulti {
+	//         output += fmt.Sprintf(" (%d)", len(t.selected))
+	//     } else {
+	//         output += fmt.Sprintf(" (%d/%d)", len(t.selected), t.multi)
+	//     }
+	// }
 	if t.progress > 0 && t.progress < 100 {
 		output += fmt.Sprintf(" (%d%%)", t.progress)
 	}
