@@ -167,7 +167,8 @@ Usage: fzf [options]
 
 `
 
-const defaultInfoPrefix = " < "
+// default: " < "
+const defaultInfoPrefix = " "
 
 // Case denotes case-sensitivity of search
 type Case int
