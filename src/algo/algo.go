@@ -445,7 +445,9 @@ func FuzzyMatchV2(caseSensitive bool, normalize bool, forward bool, input *util.
 
 	// Since O(nm) algorithm can be prohibitively expensive for large input,
 	// we fall back to the greedy algorithm.
-	if slab != nil && N*M > cap(slab.I16) {
+	// Also, we should not allow a very long pattern to avoid 16-bit integer
+	// overflow in the score matrix. 1000 is a safe limit.
+	if slab != nil && N*M > cap(slab.I16) || M > 1000 {
 		return FuzzyMatchV1(caseSensitive, normalize, forward, input, pattern, withPos, slab)
 	}
 
@@ -501,7 +503,7 @@ func FuzzyMatchV2(caseSensitive bool, normalize bool, forward bool, input *util.
 			if pidx < M {
 				F[pidx] = int32(off)
 				pidx++
-				pchar = pattern[util.Min(pidx, M-1)]
+				pchar = pattern[min(pidx, M-1)]
 			}
 			lastIdx = off
 		}
@@ -519,9 +521,9 @@ func FuzzyMatchV2(caseSensitive bool, normalize bool, forward bool, input *util.
 			inGap = false
 		} else {
 			if inGap {
-				H0[off] = util.Max16(prevH0+scoreGapExtension, 0)
+				H0[off] = max(prevH0+scoreGapExtension, 0)
 			} else {
-				H0[off] = util.Max16(prevH0+scoreGapStart, 0)
+				H0[off] = max(prevH0+scoreGapStart, 0)
 			}
 			C0[off] = 0
 			inGap = true
@@ -587,7 +589,7 @@ func FuzzyMatchV2(caseSensitive bool, normalize bool, forward bool, input *util.
 					if b >= bonusBoundary && b > fb {
 						consecutive = 1
 					} else {
-						b = util.Max16(b, util.Max16(bonusConsecutive, fb))
+						b = max(b, bonusConsecutive, fb)
 					}
 				}
 				if s1+b < s2 {
@@ -600,7 +602,7 @@ func FuzzyMatchV2(caseSensitive bool, normalize bool, forward bool, input *util.
 			Csub[off] = consecutive
 
 			inGap = s1 < s2
-			score := util.Max16(util.Max16(s1, s2), 0)
+			score := max(s1, s2, 0)
 			if pidx == M-1 && (forward && score > maxScore || !forward && score >= maxScore) {
 				maxScore, maxScorePos = score, col
 			}
@@ -684,7 +686,7 @@ func calculateScore(caseSensitive bool, normalize bool, text *util.Chars, patter
 				if bonus >= bonusBoundary && bonus > firstBonus {
 					firstBonus = bonus
 				}
-				bonus = util.Max16(util.Max16(bonus, firstBonus), bonusConsecutive)
+				bonus = max(bonus, firstBonus, bonusConsecutive)
 			}
 			if pidx == 0 {
 				score += int(bonus * bonusFirstCharMultiplier)

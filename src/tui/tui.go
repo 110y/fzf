@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/junegunn/fzf/src/util"
@@ -17,7 +18,21 @@ const (
 	BoldForce     = Attr(1 << 10)
 	FullBg        = Attr(1 << 11)
 	Strip         = Attr(1 << 12)
+
+	// Underline style stored in bits 13-15 (3 bits, values 0-4)
+	// Only meaningful when the Underline attribute bit is also set.
+	// 0 = solid (default)
+	UnderlineStyleShift = 13
+	UnderlineStyleMask  = Attr(0b111 << UnderlineStyleShift)
+	UlStyleDouble       = Attr(0b001 << UnderlineStyleShift)
+	UlStyleCurly        = Attr(0b010 << UnderlineStyleShift)
+	UlStyleDotted       = Attr(0b011 << UnderlineStyleShift)
+	UlStyleDashed       = Attr(0b100 << UnderlineStyleShift)
 )
+
+func (a Attr) UnderlineStyle() Attr {
+	return a & UnderlineStyleMask
+}
 
 func (a Attr) Merge(b Attr) Attr {
 	if b&AttrRegular > 0 {
@@ -25,7 +40,12 @@ func (a Attr) Merge(b Attr) Attr {
 		return (b &^ AttrRegular) | (a & BoldForce)
 	}
 
-	return (a &^ AttrRegular) | b
+	merged := (a &^ AttrRegular) | b
+	// When b sets Underline, use b's underline style instead of OR'ing
+	if b&Underline > 0 {
+		merged = (merged &^ UnderlineStyleMask) | (b & UnderlineStyleMask)
+	}
+	return merged
 }
 
 // Types of user action
@@ -352,6 +372,7 @@ const (
 type ColorPair struct {
 	fg   Color
 	bg   Color
+	ul   Color
 	attr Attr
 }
 
@@ -363,11 +384,11 @@ func HexToColor(rrggbb string) Color {
 }
 
 func NewColorPair(fg Color, bg Color, attr Attr) ColorPair {
-	return ColorPair{fg, bg, attr}
+	return ColorPair{fg, bg, colDefault, attr}
 }
 
 func NoColorPair() ColorPair {
-	return ColorPair{-1, -1, 0}
+	return ColorPair{-1, -1, -1, 0}
 }
 
 func (p ColorPair) Fg() Color {
@@ -376,6 +397,16 @@ func (p ColorPair) Fg() Color {
 
 func (p ColorPair) Bg() Color {
 	return p.bg
+}
+
+func (p ColorPair) Ul() Color {
+	return p.ul
+}
+
+func (p ColorPair) WithUl(ul Color) ColorPair {
+	dup := p
+	dup.ul = ul
+	return dup
 }
 
 func (p ColorPair) Attr() Attr {
@@ -404,6 +435,9 @@ func (p ColorPair) merge(other ColorPair, except Color) ColorPair {
 	if other.bg != except {
 		dup.bg = other.bg
 	}
+	if other.ul != except {
+		dup.ul = other.ul
+	}
 	return dup
 }
 
@@ -415,13 +449,13 @@ func (p ColorPair) WithAttr(attr Attr) ColorPair {
 
 func (p ColorPair) WithFg(fg ColorAttr) ColorPair {
 	dup := p
-	fgPair := ColorPair{fg.Color, colUndefined, fg.Attr}
+	fgPair := ColorPair{fg.Color, colUndefined, colUndefined, fg.Attr}
 	return dup.Merge(fgPair)
 }
 
 func (p ColorPair) WithBg(bg ColorAttr) ColorPair {
 	dup := p
-	bgPair := ColorPair{colUndefined, bg.Color, bg.Attr}
+	bgPair := ColorPair{colUndefined, bg.Color, colUndefined, bg.Attr}
 	return dup.Merge(bgPair)
 }
 
@@ -456,6 +490,7 @@ type ColorTheme struct {
 	PreviewBg        ColorAttr
 	DarkBg           ColorAttr
 	Gutter           ColorAttr
+	AltGutter        ColorAttr
 	Prompt           ColorAttr
 	InputBg          ColorAttr
 	InputBorder      ColorAttr
@@ -748,7 +783,8 @@ type Renderer interface {
 	HideCursor()
 	ShowCursor()
 
-	GetChar() Event
+	GetChar(cancellable bool) Event
+	CancelGetChar()
 
 	Top() int
 	MaxX() int
@@ -781,7 +817,7 @@ type Window interface {
 	Print(text string)
 	CPrint(color ColorPair, text string)
 	Fill(text string) FillReturn
-	CFill(fg Color, bg Color, attr Attr, text string) FillReturn
+	CFill(fg Color, bg Color, ul Color, attr Attr, text string) FillReturn
 	LinkBegin(uri string, params string)
 	LinkEnd()
 	Erase()
@@ -794,16 +830,18 @@ type FullscreenRenderer struct {
 	theme        *ColorTheme
 	mouse        bool
 	forceBlack   bool
+	tabstop      int
 	prevDownTime time.Time
 	clicks       [][2]int
 	showCursor   bool
 }
 
-func NewFullscreenRenderer(theme *ColorTheme, forceBlack bool, mouse bool) Renderer {
+func NewFullscreenRenderer(theme *ColorTheme, forceBlack bool, mouse bool, tabstop int) Renderer {
 	r := &FullscreenRenderer{
 		theme:        theme,
 		mouse:        mouse,
 		forceBlack:   forceBlack,
+		tabstop:      tabstop,
 		prevDownTime: time.Unix(0, 0),
 		clicks:       [][2]int{},
 		showCursor:   true}
@@ -826,6 +864,8 @@ var (
 	ColCursor               ColorPair
 	ColCursorEmpty          ColorPair
 	ColCursorEmptyChar      ColorPair
+	ColAltCursorEmpty       ColorPair
+	ColAltCursorEmptyChar   ColorPair
 	ColMarker               ColorPair
 	ColSelected             ColorPair
 	ColSelectedMatch        ColorPair
@@ -891,6 +931,7 @@ func init() {
 		PreviewFg:        defaultColor,
 		PreviewBg:        defaultColor,
 		Gutter:           undefined,
+		AltGutter:        undefined,
 		PreviewBorder:    defaultColor,
 		PreviewScrollbar: defaultColor,
 		PreviewLabel:     defaultColor,
@@ -943,6 +984,7 @@ func init() {
 		PreviewFg:        undefined,
 		PreviewBg:        undefined,
 		Gutter:           undefined,
+		AltGutter:        undefined,
 		PreviewBorder:    undefined,
 		PreviewScrollbar: undefined,
 		PreviewLabel:     undefined,
@@ -991,6 +1033,7 @@ func init() {
 		PreviewFg:        undefined,
 		PreviewBg:        undefined,
 		Gutter:           undefined,
+		AltGutter:        undefined,
 		PreviewBorder:    undefined,
 		PreviewScrollbar: undefined,
 		PreviewLabel:     undefined,
@@ -1041,6 +1084,7 @@ func init() {
 		PreviewFg:        undefined,
 		PreviewBg:        undefined,
 		Gutter:           undefined,
+		AltGutter:        undefined,
 		PreviewBorder:    undefined,
 		PreviewScrollbar: undefined,
 		PreviewLabel:     undefined,
@@ -1091,6 +1135,7 @@ func init() {
 		PreviewFg:        undefined,
 		PreviewBg:        undefined,
 		Gutter:           undefined,
+		AltGutter:        undefined,
 		PreviewBorder:    undefined,
 		PreviewScrollbar: undefined,
 		PreviewLabel:     undefined,
@@ -1208,6 +1253,7 @@ func InitTheme(theme *ColorTheme, baseTheme *ColorTheme, boldify bool, forceBlac
 		gutter.Attr = Dim
 	}
 	theme.Gutter = o(theme.DarkBg, gutter)
+	theme.AltGutter = o(theme.Gutter, theme.AltGutter)
 	theme.PreviewFg = o(theme.Fg, theme.PreviewFg)
 	theme.PreviewBg = o(theme.Bg, theme.PreviewBg)
 	theme.PreviewLabel = o(theme.BorderLabel, theme.PreviewLabel)
@@ -1261,7 +1307,7 @@ func initPalette(theme *ColorTheme) {
 		if fg.Color == colDefault && (fg.Attr&Reverse) > 0 {
 			bg.Color = colDefault
 		}
-		return ColorPair{fg.Color, bg.Color, fg.Attr}
+		return ColorPair{fg.Color, bg.Color, colDefault, fg.Attr}
 	}
 	blank := theme.ListFg
 	blank.Attr = AttrRegular
@@ -1277,6 +1323,8 @@ func initPalette(theme *ColorTheme) {
 	ColCursor = pair(theme.Cursor, theme.Gutter)
 	ColCursorEmpty = pair(blank, theme.Gutter)
 	ColCursorEmptyChar = pair(theme.Gutter, theme.ListBg)
+	ColAltCursorEmpty = pair(blank, theme.AltGutter)
+	ColAltCursorEmptyChar = pair(theme.AltGutter, theme.ListBg)
 	if theme.SelectedBg.Color != theme.ListBg.Color {
 		ColMarker = pair(theme.Marker, theme.SelectedBg)
 	} else {
@@ -1314,4 +1362,47 @@ func initPalette(theme *ColorTheme) {
 
 func runeWidth(r rune) int {
 	return uniseg.StringWidth(string(r))
+}
+
+// WrappedLine represents a single visual line after character-level wrapping.
+type WrappedLine struct {
+	Text         string
+	DisplayWidth int
+}
+
+// WrapLine splits a single line (no embedded \n) into visual lines
+// that fit within initialMax columns. Character-level wrapping only.
+func WrapLine(input string, prefixLength int, initialMax int, tabstop int, wrapSignWidth int) []WrappedLine {
+	lines := []WrappedLine{}
+	width := 0
+	line := ""
+	gr := uniseg.NewGraphemes(input)
+	maxWidth := initialMax
+	contMax := max(1, initialMax-wrapSignWidth)
+	for gr.Next() {
+		rs := gr.Runes()
+		str := string(rs)
+		var w int
+		if len(rs) == 1 && rs[0] == '\t' {
+			w = tabstop - (prefixLength+width)%tabstop
+			str = strings.Repeat(" ", w)
+		} else if rs[0] == '\r' {
+			w++
+		} else {
+			w = uniseg.StringWidth(str)
+		}
+		width += w
+
+		if prefixLength+width <= maxWidth {
+			line += str
+		} else {
+			lines = append(lines, WrappedLine{string(line), width - w})
+			line = str
+			prefixLength = 0
+			width = w
+			maxWidth = contMax
+		}
+	}
+	lines = append(lines, WrappedLine{string(line), width})
+	return lines
 }

@@ -95,7 +95,7 @@ Usage: fzf [options]
     -m, --multi[=MAX]        Enable multi-select with tab/shift-tab
     --highlight-line         Highlight the whole current line
     --cycle                  Enable cyclic scroll
-    --wrap                   Enable line wrap
+    --wrap[=MODE]            Enable line wrap (char|word, default: char)
     --wrap-sign=STR          Indicator for wrapped lines
     --no-multi-line          Disable multi-line display of items when using --read0
     --raw                    Enable raw mode (show non-matching items)
@@ -157,7 +157,7 @@ Usage: fzf [options]
     --preview=COMMAND        Command to preview highlighted line ({})
     --preview-window=OPT     Preview window layout (default: right:50%)
                              [up|down|left|right][,SIZE[%]]
-                             [,[no]wrap][,[no]cycle][,[no]follow][,[no]info]
+                             [,[no]wrap[-word]][,[no]cycle][,[no]follow][,[no]info]
                              [,[no]hidden][,border-STYLE]
                              [,+SCROLL[OFFSETS][/DENOM]][,~HEADER_LINES]
                              [,default][,<SIZE_THRESHOLD(ALTERNATIVE_LAYOUT)]
@@ -167,6 +167,7 @@ Usage: fzf [options]
     --preview-label=LABEL
     --preview-label-pos=N    Same as --border-label and --border-label-pos,
                              but for preview window
+    --preview-wrap-sign=STR  Indicator for wrapped lines in the preview window
 
   HEADER
     --header=STR             String to print as header
@@ -293,13 +294,31 @@ func defaultMargin() [4]sizeSpec {
 	return [4]sizeSpec{}
 }
 
-type trackOption int
+type trackOption struct {
+	enabled bool
+	index   int32
+}
 
-const (
-	trackDisabled trackOption = iota
-	trackEnabled
-	trackCurrent
+var (
+	trackDisabled = trackOption{false, minItem.Index()}
+	trackEnabled  = trackOption{true, minItem.Index()}
 )
+
+func (t trackOption) Disabled() bool {
+	return !t.enabled
+}
+
+func (t trackOption) Global() bool {
+	return t.enabled && t.index == minItem.Index()
+}
+
+func (t trackOption) Current() bool {
+	return t.enabled && t.index != minItem.Index()
+}
+
+func trackCurrent(index int32) trackOption {
+	return trackOption{true, index}
+}
 
 type windowPosition int
 
@@ -350,6 +369,7 @@ type previewOpts struct {
 	scroll      string
 	hidden      bool
 	wrap        bool
+	wrapWord    bool
 	cycle       bool
 	follow      bool
 	info        bool
@@ -526,7 +546,7 @@ func (o *previewOpts) compare(active *previewOpts, b *previewOpts) previewOptsCo
 		return previewOptsDifferentLayout
 	}
 
-	if a.wrap == b.wrap && a.headerLines == b.headerLines && a.info == b.info && a.scroll == b.scroll {
+	if a.wrap == b.wrap && a.wrapWord == b.wrapWord && a.headerLines == b.headerLines && a.info == b.info && a.scroll == b.scroll {
 		return previewOptsSame
 	}
 
@@ -588,7 +608,9 @@ type Options struct {
 	Layout            layoutType
 	Cycle             bool
 	Wrap              bool
+	WrapWord          bool
 	WrapSign          *string
+	PreviewWrapSign   *string
 	MultiLine         bool
 	CursorLine        bool
 	KeepRight         bool
@@ -674,7 +696,13 @@ func filterNonEmpty(input []string) []string {
 }
 
 func defaultPreviewOpts(command string) previewOpts {
-	return previewOpts{command, posRight, sizeSpec{50, true}, "", false, false, false, false, true, defaultBorderShape, 0, 0, nil}
+	return previewOpts{
+		command:  command,
+		position: posRight,
+		size:     sizeSpec{50, true},
+		info:     true,
+		border:   defaultBorderShape,
+	}
 }
 
 func defaultOptions() *Options {
@@ -716,6 +744,7 @@ func defaultOptions() *Options {
 		Layout:       layoutDefault,
 		Cycle:        false,
 		Wrap:         false,
+		WrapWord:     false,
 		MultiLine:    true,
 		KeepRight:    false,
 		Hscroll:      true,
@@ -1390,6 +1419,14 @@ func parseTheme(defaultTheme *tui.ColorTheme, str string) (*tui.ColorTheme, *tui
 						cattr.Attr |= tui.Italic
 					case "underline":
 						cattr.Attr |= tui.Underline
+					case "underline-double":
+						cattr.Attr |= tui.Underline | tui.UlStyleDouble
+					case "underline-curly":
+						cattr.Attr |= tui.Underline | tui.UlStyleCurly
+					case "underline-dotted":
+						cattr.Attr |= tui.Underline | tui.UlStyleDotted
+					case "underline-dashed":
+						cattr.Attr |= tui.Underline | tui.UlStyleDashed
 					case "blink":
 						cattr.Attr |= tui.Blink
 					case "reverse":
@@ -1477,6 +1514,8 @@ func parseTheme(defaultTheme *tui.ColorTheme, str string) (*tui.ColorTheme, *tui
 				mergeAttr(&theme.Nomatch)
 			case "gutter":
 				mergeAttr(&theme.Gutter)
+			case "alt-gutter":
+				mergeAttr(&theme.AltGutter)
 			case "hl":
 				mergeAttr(&theme.Match)
 			case "current-hl", "hl+":
@@ -1770,6 +1809,8 @@ func parseActionList(masked string, original string, prevActions []*action, putA
 			appendAction(actToggleHeader)
 		case "toggle-wrap":
 			appendAction(actToggleWrap)
+		case "toggle-wrap-word":
+			appendAction(actToggleWrapWord)
 		case "toggle-multi-line":
 			appendAction(actToggleMultiLine)
 		case "toggle-hscroll":
@@ -1836,6 +1877,8 @@ func parseActionList(masked string, original string, prevActions []*action, putA
 			appendAction(actTogglePreview)
 		case "toggle-preview-wrap":
 			appendAction(actTogglePreviewWrap)
+		case "toggle-preview-wrap-word":
+			appendAction(actTogglePreviewWrapWord)
 		case "toggle-sort":
 			appendAction(actToggleSort)
 		case "offset-up":
@@ -2247,8 +2290,13 @@ func parsePreviewWindowImpl(opts *previewOpts, input string) error {
 			opts.hidden = false
 		case "wrap":
 			opts.wrap = true
+			opts.wrapWord = false
+		case "wrap-word":
+			opts.wrap = true
+			opts.wrapWord = true
 		case "nowrap":
 			opts.wrap = false
+			opts.wrapWord = false
 		case "cycle":
 			opts.cycle = true
 		case "nocycle":
@@ -2812,9 +2860,29 @@ func parseOptions(index *int, opts *Options, allArgs []string) error {
 		case "--no-cycle":
 			opts.Cycle = false
 		case "--wrap":
-			opts.Wrap = true
+			given, str := optionalNextString()
+			if given {
+				switch str {
+				case "char":
+					opts.Wrap = true
+					opts.WrapWord = false
+				case "word":
+					opts.Wrap = true
+					opts.WrapWord = true
+				default:
+					return errors.New("invalid wrap mode: " + str + " (expected: char or word)")
+				}
+			} else {
+				opts.Wrap = true
+			}
 		case "--no-wrap":
 			opts.Wrap = false
+			opts.WrapWord = false
+		case "--wrap-word":
+			opts.Wrap = true
+			opts.WrapWord = true
+		case "--no-wrap-word":
+			opts.WrapWord = false
 		case "--wrap-sign":
 			str, err := nextString("wrap sign required")
 			if err != nil {
@@ -3048,6 +3116,12 @@ func parseOptions(index *int, opts *Options, allArgs []string) error {
 			if opts.Preview.border, err = parseBorder(arg, !hasArg); err != nil {
 				return err
 			}
+		case "--preview-wrap-sign":
+			str, err := nextString("preview wrap sign required")
+			if err != nil {
+				return err
+			}
+			opts.PreviewWrapSign = &str
 		case "--height":
 			str, err := nextString("height required: [~]HEIGHT[%]")
 			if err != nil {
