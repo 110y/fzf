@@ -314,8 +314,6 @@ type Terminal struct {
 	sort                 bool
 	toggleSort           bool
 	track                trackOption
-	trackNth             []Range
-	trackNthValue        string
 	targetIndex          int32
 	delimiter            Delimiter
 	expect               map[tui.Event]string
@@ -1045,7 +1043,6 @@ func NewTerminal(opts *Options, eventBox *util.EventBox, executor *util.Executor
 		sort:               opts.Sort > 0,
 		toggleSort:         opts.ToggleSort,
 		track:              opts.Track,
-		trackNth:           opts.TrackNth,
 		targetIndex:        minItem.Index(),
 		delimiter:          opts.Delimiter,
 		expect:             opts.Expect,
@@ -1828,19 +1825,8 @@ func (t *Terminal) UpdateList(result MatchResult) {
 	merger := result.merger
 	t.mutex.Lock()
 	prevIndex := minItem.Index()
-	prevNthValue := ""
-	useNthTracking := len(t.trackNth) > 0 && t.track != trackDisabled
 	newRevision := merger.Revision()
-
-	if useNthTracking {
-		if t.track.Current() && t.trackNthValue != "" {
-			prevNthValue = t.trackNthValue
-		} else if t.merger.Length() > 0 {
-			if item := t.currentItem(); item != nil {
-				prevNthValue = t.extractTrackNthValue(item)
-			}
-		}
-	} else if t.revision.compatible(newRevision) && t.track != trackDisabled {
+	if t.revision.compatible(newRevision) && t.track != trackDisabled {
 		if t.merger.Length() > 0 {
 			prevIndex = t.currentIndex()
 		} else if merger.Length() > 0 {
@@ -1907,30 +1893,7 @@ func (t *Terminal) UpdateList(result MatchResult) {
 		t.triggerLoad = false
 		t.eventChan <- tui.Load.AsEvent()
 	}
-	if useNthTracking && prevNthValue != "" {
-		pos := t.cy - t.offset
-		count := t.merger.Length()
-		found := false
-		for i := 0; i < count; i++ {
-			item := t.merger.Get(i).item
-			if t.extractTrackNthValue(item) == prevNthValue {
-				t.cy = i
-				t.offset = t.cy - pos
-				found = true
-				break
-			}
-		}
-		if !found {
-			if t.track.Current() {
-				t.track = trackDisabled
-				t.trackNth = nil
-				t.cy = pos
-				t.offset = 0
-			} else if t.cy > count {
-				t.cy = count - min(count, t.maxItems()) + pos
-			}
-		}
-	} else if prevIndex >= 0 {
+	if prevIndex >= 0 {
 		pos := t.cy - t.offset
 		count := t.merger.Length()
 		i := t.merger.FindIndex(prevIndex)
@@ -5392,13 +5355,6 @@ func (t *Terminal) currentIndex() int32 {
 	return minItem.Index()
 }
 
-func (t *Terminal) extractTrackNthValue(item *Item) string {
-	text := item.AsString(t.ansi)
-	tokens := Tokenize(text, t.delimiter)
-	transformed := Transform(tokens, t.trackNth)
-	return JoinTokens(transformed)
-}
-
 func (t *Terminal) addClickHeaderWord(env []string) []string {
 	/*
 	 * echo $'HL1\nHL2' | fzf --header-lines 3 --header $'H1\nH2' --header-lines-border --bind 'click-header:preview:env | grep FZF_CLICK'
@@ -5858,7 +5814,7 @@ func (t *Terminal) Loop() error {
 					case reqList:
 						t.printList()
 						currentIndex := t.currentIndex()
-						if t.track.Current() && len(t.trackNth) == 0 && t.track.index != currentIndex {
+						if t.track.Current() && t.track.index != currentIndex {
 							t.track = trackDisabled
 							info = true
 						}
@@ -6995,14 +6951,8 @@ func (t *Terminal) Loop() error {
 			case actToggleTrackCurrent:
 				if t.track.Current() {
 					t.track = trackDisabled
-					t.trackNthValue = ""
 				} else if t.track.Disabled() {
 					t.track = trackCurrent(t.currentIndex())
-					if len(t.trackNth) > 0 {
-						if item := t.currentItem(); item != nil {
-							t.trackNthValue = t.extractTrackNthValue(item)
-						}
-					}
 				}
 				req(reqInfo)
 			case actShowHeader:
@@ -7061,17 +7011,11 @@ func (t *Terminal) Loop() error {
 				// Global tracking has higher priority
 				if !t.track.Global() {
 					t.track = trackCurrent(t.currentIndex())
-					if len(t.trackNth) > 0 {
-						if item := t.currentItem(); item != nil {
-							t.trackNthValue = t.extractTrackNthValue(item)
-						}
-					}
 				}
 				req(reqInfo)
 			case actUntrackCurrent:
 				if t.track.Current() {
 					t.track = trackDisabled
-					t.trackNthValue = ""
 				}
 				req(reqInfo)
 			case actSearch:
