@@ -21,7 +21,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ..
-.TH fzf 1 "Mar 2026" "fzf 0.70.0" "fzf - a command-line fuzzy finder"
+.TH fzf 1 "May 2026" "fzf 0.73.1" "fzf - a command-line fuzzy finder"
 
 .SH NAME
 fzf - a command-line fuzzy finder
@@ -384,7 +384,7 @@ Use black background
 
 .SS DISPLAY MODE
 .TP
-.BI "\-\-height=" "[~]HEIGHT[%]"
+.BI "\-\-height=" "[~][\-]HEIGHT[%]"
 Display fzf window below the cursor with the given height instead of using
 the full screen.
 
@@ -394,16 +394,18 @@ height minus the given value.
   fzf \-\-height=\-1
 
 When prefixed with \fB~\fR, fzf will automatically determine the height in the
-range according to the input size.
+range according to the input size. You can combine \fB~\fR with a negative
+value.
 
   # Will not take up 100% of the screen
   seq 5 | fzf \-\-height=~100%
 
+  # Adapt to input size, up to terminal height minus 1
+  seq 5 | fzf \-\-height=~\-1
+
 Adaptive height has the following limitations:
 .br
 * Cannot be used with top/bottom margin and padding given in percent size
-.br
-* Negative value is not allowed
 .br
 * It will not find the right size when there are multi-line items
 
@@ -415,25 +417,26 @@ layout options so that the specified number of items are visible in the list
 section (default: \fB10+\fR).
 Ignored when \fB\-\-height\fR is not specified or set as an absolute value.
 .TP
-.BI "\-\-tmux" "[=[center|top|bottom|left|right][,SIZE[%]][,SIZE[%]][,border-native]]"
-Start fzf in a tmux popup (default \fBcenter,50%\fR). Requires tmux 3.3 or
-later. This option is ignored if you are not running fzf inside tmux.
+.BI "\-\-popup" "[=[center|top|bottom|left|right][,SIZE[%]][,SIZE[%]][,border-native]]"
+Start fzf in a tmux popup or in a Zellij floating pane (default
+\fBcenter,50%\fR). Requires tmux 3.3+ or Zellij 0.44+. This option is ignored if you
+are not running fzf inside tmux or Zellij. \fB\-\-tmux\fR is an alias for this option.
 
 e.g.
   \fB# Popup in the center with 70% width and height
-  fzf \-\-tmux 70%
+  fzf \-\-popup 70%
 
   # Popup on the left with 40% width and 100% height
-  fzf \-\-tmux right,40%
+  fzf \-\-popup right,40%
 
   # Popup on the bottom with 100% width and 30% height
-  fzf \-\-tmux bottom,30%
+  fzf \-\-popup bottom,30%
 
   # Popup on the top with 80% width and 40% height
-  fzf \-\-tmux top,80%,40%
+  fzf \-\-popup top,80%,40%
 
-  # Popup with a native tmux border in the center with 80% width and height
-  fzf \-\-tmux center,80%,border\-native\fR
+  # Popup with a native tmux or Zellij border in the center with 80% width and height
+  fzf \-\-popup center,80%,border\-native\fR
 
 .SS LAYOUT
 .TP
@@ -513,6 +516,8 @@ Draw border around the finder
 .BR bold "          Border with bold lines"
 .br
 .BR double "        Border with double lines"
+.br
+.BR dashed "        Border with dashed lines and rounded corners"
 .br
 .BR block "         Border using block elements; suitable when using different background colors"
 .br
@@ -952,6 +957,8 @@ Should be used with one of the following \fB\-\-preview\-window\fR options.
 .br
 .B * border\-double
 .br
+.B * border\-dashed
+.br
 .B * border\-block
 .br
 .B * border\-thinblock
@@ -986,8 +993,13 @@ border line.
     \fBdown
     \fBleft
     \fBright
+    \fBnext
 
 \fRDetermines the layout of the preview window.
+
+* \fBnext\fR places the preview window adjacent to the input section, on
+the list side: above the input in the default layout, below the input
+in \fB\-\-layout=reverse\fR.
 
 * If the argument contains \fB:hidden\fR, the preview window will be hidden by
 default until \fBtoggle\-preview\fR action is triggered.
@@ -1097,7 +1109,17 @@ Print header before the prompt line. When both normal header and header lines
 .TP
 .BI "\-\-header\-border" [=STYLE]
 Draw border around the header section. \fBline\fR style draws a single
-separator line between the header window and the list section.
+separator line between the header window and the list section. \fBinline\fR
+style embeds the header inside the list border frame, joined to the list
+section by a horizontal separator; it requires a \fB\-\-list\-border\fR
+shape that has both top and bottom segments (rounded / sharp / bold /
+double / dashed / block / thinblock / horizontal) and falls back to \fBline\fR
+otherwise. When the list border also has side segments, the separator
+joins them with T-junctions; \fBhorizontal\fR has no side borders, so the
+separator is drawn without T-junction endpoints. Takes precedence over
+\fB\-\-header\-first\fR (the section stays inside the list frame), and
+when \fB\-\-header\-lines\fR is also set \fB\-\-header\-lines\-border\fR
+must also be \fBinline\fR.
 
 .TP
 .BI "\-\-header\-label" [=LABEL]
@@ -1113,6 +1135,10 @@ Display header from \fB--header\-lines\fR with a separate border. Pass
 \fBnone\fR to still separate the header lines but without a border. To combine
 two headers, use \fB\-\-no\-header\-lines\-border\fR. \fBline\fR style draws
 a single separator line between the header lines and the list section.
+\fBinline\fR style embeds the header lines inside the list border frame
+with a horizontal separator; it requires a \fB\-\-list\-border\fR shape
+that has both top and bottom segments, falls back to \fBline\fR
+otherwise.
 
 .SS FOOTER
 
@@ -1126,7 +1152,10 @@ are not affected by \fB\-\-with\-nth\fR. ANSI color codes are processed even whe
 .TP
 .BI "\-\-footer\-border" [=STYLE]
 Draw border around the footer section. \fBline\fR style draws a single
-separator line between the footer and the list section.
+separator line between the footer and the list section. \fBinline\fR style
+embeds the footer inside the list border frame with a horizontal separator;
+it requires a \fB\-\-list\-border\fR shape that has both top and bottom
+segments and falls back to \fBline\fR otherwise.
 
 .TP
 .BI "\-\-footer\-label" [=LABEL]
@@ -1344,6 +1373,12 @@ Print script to set up Fish shell integration
 
 e.g. \fBfzf \-\-fish | source\fR
 
+.TP
+.B "\-\-nushell"
+Print script to set up Nushell shell integration
+
+e.g. \fBfzf \-\-nushell | save \-f ~/.config/nushell/autoload/_fzf_integration.nu\fR
+
 .SS OTHERS
 .TP
 .B "\-\-no\-mouse"
@@ -1446,6 +1481,8 @@ fzf exports the following environment variables to its child processes.
 .br
 .BR FZF_POS "             Vertical position of the cursor in the list starting from 1"
 .br
+.BR FZF_CURRENT_ITEM "    Text of the current item (unset if the list is empty)"
+.br
 .BR FZF_WRAP "            The line wrapping mode (char, word) when enabled"
 .br
 .BR FZF_QUERY "           Current query string"
@@ -1476,6 +1513,10 @@ fzf exports the following environment variables to its child processes.
 .br
 .BR FZF_KEY "             The name of the last key pressed"
 .br
+.BR FZF_IDLE_TIME "       Whole seconds since the last user activity"
+.br
+.BR FZF_IDLE_TIME_MS "    Milliseconds since the last user activity"
+.br
 .BR FZF_PORT "            Port number when \-\-listen option is used"
 .br
 .BR FZF_SOCK "            Unix socket path when \-\-listen option is used"
@@ -1489,6 +1530,10 @@ fzf exports the following environment variables to its child processes.
 .BR FZF_PREVIEW_COLUMNS " Number of columns in the preview window"
 .br
 .BR FZF_RAW "             Only in raw mode. 1 if the current item matches, 0 otherwise"
+
+.PP
+.B FZF_CURRENT_ITEM
+is omitted when the item contains a NUL byte, because exec(2) cannot pass it.
 
 .SH EXTENDED SEARCH MODE
 
@@ -1913,6 +1958,30 @@ Triggered when a mouse click occurs within the footer. Sets
 \fBFZF_CLICK_FOOTER_LINE\fR and \fBFZF_CLICK_FOOTER_COLUMN\fR environment
 variables starting from 1. It optionally sets \fBFZF_CLICK_FOOTER_WORD\fR
 if clicked on a word.
+.RE
+
+\fIevery(N)\fR
+.RS
+Triggered every \fIN\fR seconds (\fIN\fR can be a fractional number, e.g.
+\fB0.5\fR). The minimum interval is \fB0.01\fR seconds; values are floored
+to that.
+
+Combine with the \fBFZF_IDLE_TIME\fR (whole seconds) and
+\fBFZF_IDLE_TIME_MS\fR (milliseconds) environment variables to build
+idle\-based behavior without a separate event.
+
+e.g.
+     \fB# Live process list, refreshed every 2 seconds.
+     # --track --id-nth 2 keeps the cursor on the same PID across reloads.
+     fzf \-\-header\-lines 1 \-\-track \-\-id\-nth 2 \\
+         \-\-bind 'start,every(2):reload\-sync:ps \-ef'
+
+     # Auto\-accept after 10 seconds of inactivity, with a countdown in the footer after 5s.
+     fzf \-\-bind 'every(1):bg\-transform:
+       if   [[ $FZF_IDLE_TIME \-lt 5  ]]; then echo change\-footer:
+       elif [[ $FZF_IDLE_TIME \-lt 10 ]]; then echo "change\-footer:auto\-accept in $((10 \- FZF_IDLE_TIME))s"
+       else echo accept
+       fi'\fR
 .RE
 
 .SS AVAILABLE ACTIONS:

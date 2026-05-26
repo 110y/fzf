@@ -4,6 +4,7 @@ package fzf
 import (
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"sync"
 	"time"
@@ -55,6 +56,9 @@ func Run(opts *Options) (int, error) {
 	if opts.Filter == nil {
 		if opts.useTmux() {
 			return runTmux(os.Args, opts)
+		}
+		if opts.useZellij() {
+			return runZellij(os.Args, opts)
 		}
 
 		if needWinpty(opts) {
@@ -237,6 +241,9 @@ func Run(opts *Options) (int, error) {
 		}
 		denylist = make(map[int32]struct{})
 		denyMutex.Unlock()
+	}
+	if opts.HeaderLines > math.MaxInt32 {
+		opts.HeaderLines = math.MaxInt32
 	}
 	headerLines := int32(opts.HeaderLines)
 	headerUpdated := false
@@ -464,7 +471,7 @@ func Run(opts *Options) (int, error) {
 					terminal.UpdateCount(max(0, total-int(headerLines)), !reading, value.(*string))
 					if headerLines > 0 && !headerUpdated {
 						terminal.UpdateHeader(GetItems(snapshot, int(headerLines)))
-						headerUpdated = int32(total) >= headerLines
+						headerUpdated = total >= int(headerLines)
 					}
 					if heightUnknown && !deferred {
 						determine(!reading)

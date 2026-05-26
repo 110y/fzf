@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"regexp"
 	"strconv"
@@ -66,7 +67,7 @@ Usage: fzf [options]
     --no-bold                Do not use bold text
 
   DISPLAY MODE
-    --height=[~]HEIGHT[%]    Display fzf window below the cursor with the given
+    --height=[~][-]HEIGHT[%] Display fzf window below the cursor with the given
                              height instead of using fullscreen.
                              A negative value is calculated as the terminal height
                              minus the given value.
@@ -75,16 +76,17 @@ Usage: fzf [options]
     --min-height=HEIGHT[+]   Minimum height when --height is given as a percentage.
                              Add '+' to automatically increase the value
                              according to the other layout options (default: 10+).
-    --tmux[=OPTS]            Start fzf in a tmux popup (requires tmux 3.3+)
+    --popup[=OPTS]           Start fzf in a popup window (requires tmux 3.3+ or Zellij 0.44+)
                              [center|top|bottom|left|right][,SIZE[%]][,SIZE[%]]
                              [,border-native] (default: center,50%)
+    --tmux[=OPTS]            Alias for --popup
 
   LAYOUT
     --layout=LAYOUT          Choose layout: [default|reverse|reverse-list]
     --margin=MARGIN          Screen margin (TRBL | TB,RL | T,RL,B | T,R,B,L)
     --padding=PADDING        Padding inside border (TRBL | TB,RL | T,RL,B | T,R,B,L)
     --border[=STYLE]         Draw border around the finder
-                             [rounded|sharp|bold|block|thinblock|double|horizontal|vertical|
+                             [rounded|sharp|bold|block|thinblock|double|dashed|horizontal|vertical|
                               top|bottom|left|right|line|none] (default: rounded)
     --border-label=LABEL     Label to print on the border
     --border-label-pos=COL   Position of the border label
@@ -127,7 +129,7 @@ Usage: fzf [options]
                              (each for list section and preview window)
     --no-scrollbar           Hide scrollbar
     --list-border[=STYLE]    Draw border around the list section
-                             [rounded|sharp|bold|block|thinblock|double|horizontal|vertical|
+                             [rounded|sharp|bold|block|thinblock|double|dashed|horizontal|vertical|
                               top|bottom|left|right|none] (default: rounded)
     --list-label=LABEL       Label to print on the list border
     --list-label-pos=COL     Position of the list label
@@ -147,7 +149,7 @@ Usage: fzf [options]
     --ghost=TEXT             Ghost text to display when the input is empty
     --filepath-word          Make word-wise movements respect path separators
     --input-border[=STYLE]   Draw border around the input section
-                             [rounded|sharp|bold|block|thinblock|double|horizontal|vertical|
+                             [rounded|sharp|bold|block|thinblock|double|dashed|horizontal|vertical|
                               top|bottom|left|right|line|none] (default: rounded)
     --input-label=LABEL      Label to print on the input border
     --input-label-pos=COL    Position of the input label
@@ -158,13 +160,13 @@ Usage: fzf [options]
   PREVIEW WINDOW
     --preview=COMMAND        Command to preview highlighted line ({})
     --preview-window=OPT     Preview window layout (default: right:50%)
-                             [up|down|left|right][,SIZE[%]]
+                             [up|down|left|right|next][,SIZE[%]]
                              [,[no]wrap[-word]][,[no]cycle][,[no]follow][,[no]info]
                              [,[no]hidden][,border-STYLE]
                              [,+SCROLL[OFFSETS][/DENOM]][,~HEADER_LINES]
                              [,default][,<SIZE_THRESHOLD(ALTERNATIVE_LAYOUT)]
     --preview-border[=STYLE] Short for --preview-window=border-STYLE
-                             [rounded|sharp|bold|block|thinblock|double|horizontal|vertical|
+                             [rounded|sharp|bold|block|thinblock|double|dashed|horizontal|vertical|
                               top|bottom|left|right|line|none] (default: rounded)
     --preview-label=LABEL
     --preview-label-pos=N    Same as --border-label and --border-label-pos,
@@ -176,11 +178,12 @@ Usage: fzf [options]
     --header-lines=N         The first N lines of the input are treated as header
     --header-first           Print header before the prompt line
     --header-border[=STYLE]  Draw border around the header section
-                             [rounded|sharp|bold|block|thinblock|double|horizontal|vertical|
-                              top|bottom|left|right|line|none] (default: rounded)
+                             [rounded|sharp|bold|block|thinblock|double|dashed|horizontal|vertical|
+                              top|bottom|left|right|line|inline|none] (default: rounded)
     --header-lines-border[=STYLE]
                              Display header from --header-lines with a separate border.
                              Pass 'none' to still separate it but without a border.
+                             Pass 'inline' to embed it inside the list frame.
     --header-label=LABEL     Label to print on the header border
     --header-label-pos=COL   Position of the header label
                              [POSITIVE_INTEGER: columns from left|
@@ -190,8 +193,8 @@ Usage: fzf [options]
   FOOTER
     --footer=STR             String to print as footer
     --footer-border[=STYLE]  Draw border around the footer section
-                             [rounded|sharp|bold|block|thinblock|double|horizontal|vertical|
-                              top|bottom|left|right|line|none] (default: line)
+                             [rounded|sharp|bold|block|thinblock|double|dashed|horizontal|vertical|
+                              top|bottom|left|right|line|inline|none] (default: line)
     --footer-label=LABEL     Label to print on the footer border
     --footer-label-pos=COL   Position of the footer label
                              [POSITIVE_INTEGER: columns from left|
@@ -230,6 +233,7 @@ Usage: fzf [options]
     --bash                   Print script to set up Bash shell integration
     --zsh                    Print script to set up Zsh shell integration
     --fish                   Print script to set up Fish shell integration
+    --nushell                Print script to set up Nushell integration
 
   HELP
     --version                Display version information and exit
@@ -330,6 +334,7 @@ const (
 	posLeft
 	posRight
 	posCenter
+	posNext // adjacent to the input section, on the list side
 )
 
 type tmuxOptions struct {
@@ -389,7 +394,7 @@ func (o *previewOpts) Toggle() {
 	o.hidden = !o.hidden
 }
 
-func (o *previewOpts) Border() tui.BorderShape {
+func (o *previewOpts) Border(layout layoutType) tui.BorderShape {
 	shape := o.border
 	if shape == tui.BorderLine {
 		switch o.position {
@@ -401,6 +406,12 @@ func (o *previewOpts) Border() tui.BorderShape {
 			shape = tui.BorderRight
 		case posRight:
 			shape = tui.BorderLeft
+		case posNext:
+			if layout == layoutReverse {
+				shape = tui.BorderBottom
+			} else {
+				shape = tui.BorderTop
+			}
 		}
 	}
 	return shape
@@ -418,7 +429,7 @@ func parseTmuxOptions(arg string, index int) (*tmuxOptions, error) {
 	var err error
 	opts := defaultTmuxOptions(index)
 	tokens := splitRegexp.Split(arg, -1)
-	errorToReturn := errors.New("invalid tmux option: " + arg + " (expected: [center|top|bottom|left|right][,SIZE[%]][,SIZE[%][,border-native]])")
+	errorToReturn := errors.New("invalid popup option: " + arg + " (expected: [center|top|bottom|left|right][,SIZE[%]][,SIZE[%][,border-native]])")
 	if len(tokens) == 0 || len(tokens) > 4 {
 		return nil, errorToReturn
 	}
@@ -510,7 +521,7 @@ func parseLabelPosition(opts *labelOpts, arg string) error {
 }
 
 func (a previewOpts) aboveOrBelow() bool {
-	return a.size.size > 0 && (a.position == posUp || a.position == posDown)
+	return a.size.size > 0 && (a.position == posUp || a.position == posDown || a.position == posNext)
 }
 
 type previewOptsCompare int
@@ -577,6 +588,7 @@ type Options struct {
 	Bash              bool
 	Zsh               bool
 	Fish              bool
+	Nushell           bool
 	Man               bool
 	Fuzzy             bool
 	FuzzyAlgo         algo.Algo
@@ -724,6 +736,7 @@ func defaultOptions() *Options {
 		Bash:         false,
 		Zsh:          false,
 		Fish:         false,
+		Nushell:      false,
 		Man:          false,
 		Fuzzy:        true,
 		FuzzyAlgo:    algo.FuzzyMatchV2,
@@ -870,7 +883,7 @@ func nthTransformer(str string) (func(Delimiter) func([]Token, int32) string, er
 		nth   []Range
 	}
 
-	parts := make([]NthParts, len(indexes))
+	parts := make([]NthParts, 0, len(indexes))
 	idx := 0
 	for _, index := range indexes {
 		if idx < index[0] {
@@ -953,6 +966,8 @@ func parseBorder(str string, optional bool) (tui.BorderShape, error) {
 	switch str {
 	case "line":
 		return tui.BorderLine, nil
+	case "inline":
+		return tui.BorderInline, nil
 	case "rounded":
 		return tui.BorderRounded, nil
 	case "sharp":
@@ -965,6 +980,8 @@ func parseBorder(str string, optional bool) (tui.BorderShape, error) {
 		return tui.BorderThinBlock, nil
 	case "double":
 		return tui.BorderDouble, nil
+	case "dashed":
+		return tui.BorderDashed, nil
 	case "horizontal":
 		return tui.BorderHorizontal, nil
 	case "vertical":
@@ -983,7 +1000,7 @@ func parseBorder(str string, optional bool) (tui.BorderShape, error) {
 	if optional && str == "" {
 		return defaultBorderShape, nil
 	}
-	return tui.BorderNone, errors.New("invalid border style (expected: rounded|sharp|bold|block|thinblock|double|horizontal|vertical|top|bottom|left|right|none)")
+	return tui.BorderNone, errors.New("invalid border style (expected: rounded|sharp|bold|block|thinblock|double|dashed|horizontal|vertical|top|bottom|left|right|line|inline|none)")
 }
 
 func parseKeyChords(str string, message string) (map[tui.Event]string, []tui.Event, error) {
@@ -1252,7 +1269,14 @@ func parseKeyChords(str string, message string) (map[tui.Event]string, []tui.Eve
 			add(tui.F12)
 		default:
 			runes := []rune(key)
-			if len(key) == 10 && strings.HasPrefix(lkey, "ctrl-alt-") && isAlphabet(lkey[9]) {
+			if strings.HasPrefix(lkey, "every(") && strings.HasSuffix(lkey, ")") {
+				evt, err := parseEveryEvent(key[6 : len(key)-1])
+				if err != nil {
+					return nil, list, err
+				}
+				chords[evt] = key
+				list = append(list, evt)
+			} else if len(key) == 10 && strings.HasPrefix(lkey, "ctrl-alt-") && isAlphabet(lkey[9]) {
 				r := rune(lkey[9])
 				evt := tui.CtrlAltKey(r)
 				if r == 'h' && !util.IsWindows() {
@@ -1292,6 +1316,21 @@ func parseKeyChords(str string, message string) (map[tui.Event]string, []tui.Eve
 		}
 	}
 	return chords, list, nil
+}
+
+func parseEveryEvent(arg string) (tui.Event, error) {
+	secs, err := strconv.ParseFloat(strings.TrimSpace(arg), 64)
+	if err != nil || math.IsNaN(secs) || math.IsInf(secs, 0) || secs <= 0 {
+		return tui.Event{}, errors.New("every() requires a positive number of seconds")
+	}
+	if secs < 0.01 {
+		secs = 0.01
+	}
+	ms := math.Round(secs * 1000)
+	if ms > math.MaxInt32 {
+		return tui.Event{}, errors.New("every() interval is too large")
+	}
+	return tui.Event{Type: tui.Every, Char: rune(int32(ms))}, nil
 }
 
 func parseScheme(str string) (string, []criterion, error) {
@@ -1567,7 +1606,7 @@ func parseTheme(defaultTheme *tui.ColorTheme, str string) (*tui.ColorTheme, *tui
 			case "info":
 				mergeAttr(&theme.Info)
 			case "pointer":
-				mergeAttr(&theme.Cursor)
+				mergeAttr(&theme.Pointer)
 			case "marker":
 				mergeAttr(&theme.Marker)
 			case "header", "header-fg":
@@ -2222,9 +2261,6 @@ func parseHeight(str string, index int) (heightSpec, error) {
 		str = str[1:]
 	}
 	if strings.HasPrefix(str, "-") {
-		if heightSpec.auto {
-			return heightSpec, errors.New("negative(-) height is not compatible with adaptive(~) height")
-		}
 		heightSpec.inverse = true
 		str = str[1:]
 	}
@@ -2327,6 +2363,8 @@ func parsePreviewWindowImpl(opts *previewOpts, input string) error {
 			opts.position = posLeft
 		case "right":
 			opts.position = posRight
+		case "next":
+			opts.position = posNext
 		case "rounded", "border", "border-rounded":
 			opts.border = tui.BorderRounded
 		case "border-line":
@@ -2341,6 +2379,8 @@ func parsePreviewWindowImpl(opts *previewOpts, input string) error {
 			opts.border = tui.BorderThinBlock
 		case "border-double":
 			opts.border = tui.BorderDouble
+		case "border-dashed":
+			opts.border = tui.BorderDashed
 		case "noborder", "border-none":
 			opts.border = tui.BorderNone
 		case "border-horizontal":
@@ -2517,6 +2557,7 @@ func parseOptions(index *int, opts *Options, allArgs []string) error {
 		opts.Bash = false
 		opts.Zsh = false
 		opts.Fish = false
+		opts.Nushell = false
 		opts.Help = false
 		opts.Version = false
 		opts.Man = false
@@ -2629,6 +2670,9 @@ func parseOptions(index *int, opts *Options, allArgs []string) error {
 		case "--fish":
 			clearExitingOpts()
 			opts.Fish = true
+		case "--nushell":
+			clearExitingOpts()
+			opts.Nushell = true
 		case "-h", "--help":
 			clearExitingOpts()
 			opts.Help = true
@@ -2637,7 +2681,7 @@ func parseOptions(index *int, opts *Options, allArgs []string) error {
 			opts.Version = true
 		case "--no-winpty":
 			opts.NoWinpty = true
-		case "--tmux":
+		case "--tmux", "--popup":
 			given, str := optionalNextString()
 			if given {
 				if opts.Tmux, err = parseTmuxOptions(str, index); err != nil {
@@ -2646,7 +2690,7 @@ func parseOptions(index *int, opts *Options, allArgs []string) error {
 			} else {
 				opts.Tmux = defaultTmuxOptions(index)
 			}
-		case "--no-tmux":
+		case "--no-tmux", "--no-popup":
 			opts.Tmux = nil
 		case "--tty-default":
 			if opts.TtyDefault, err = nextString("tty device name required"); err != nil {
@@ -3131,7 +3175,7 @@ func parseOptions(index *int, opts *Options, allArgs []string) error {
 		case "--no-preview":
 			opts.Preview.command = ""
 		case "--preview-window":
-			str, err := nextString("preview window layout required: [up|down|left|right][,SIZE[%]][,border-STYLE][,wrap][,cycle][,hidden][,+SCROLL[OFFSETS][/DENOM]][,~HEADER_LINES][,default]")
+			str, err := nextString("preview window layout required: [up|down|left|right|next][,SIZE[%]][,border-STYLE][,wrap][,cycle][,hidden][,+SCROLL[OFFSETS][/DENOM]][,~HEADER_LINES][,default]")
 			if err != nil {
 				return err
 			}
@@ -3152,7 +3196,7 @@ func parseOptions(index *int, opts *Options, allArgs []string) error {
 			}
 			opts.PreviewWrapSign = &str
 		case "--height":
-			str, err := nextString("height required: [~]HEIGHT[%]")
+			str, err := nextString("height required: [~][-]HEIGHT[%]")
 			if err != nil {
 				return err
 			}
@@ -3519,7 +3563,9 @@ func applyPreset(opts *Options, preset string) error {
 		opts.Preview.border = tui.BorderLine
 		opts.Preview.info = false
 		opts.InfoStyle = infoDefault
-		opts.Theme.Gutter = tui.ColorAttr{Color: -1, Attr: 0}
+		opts.Theme.Gutter = tui.NewColorAttr()
+		space := " "
+		opts.Gutter = &space
 		empty := ""
 		opts.Separator = &empty
 		opts.Scrollbar = &empty
@@ -3594,7 +3640,7 @@ func validateOptions(opts *Options) error {
 		}
 	}
 
-	if opts.Height.auto {
+	if opts.Height.auto && (opts.Tmux == nil || opts.Tmux.index < opts.Height.index) {
 		for _, s := range []sizeSpec{opts.Margin[0], opts.Margin[2]} {
 			if s.percent {
 				return errors.New("adaptive height is not compatible with top/bottom percent margin")
@@ -3609,6 +3655,19 @@ func validateOptions(opts *Options) error {
 
 	if opts.Theme.Nth.IsColorDefined() {
 		return errors.New("only ANSI attributes are allowed for 'nth' (regular, bold, underline, reverse, dim, italic, strikethrough)")
+	}
+
+	if opts.BorderShape == tui.BorderInline ||
+		opts.ListBorderShape == tui.BorderInline ||
+		opts.InputBorderShape == tui.BorderInline ||
+		opts.Preview.border == tui.BorderInline {
+		return errors.New("inline border is only supported for --header-border, --header-lines-border, and --footer-border")
+	}
+	if opts.HeaderBorderShape == tui.BorderInline &&
+		opts.HeaderLinesShape != tui.BorderInline &&
+		opts.HeaderLinesShape != tui.BorderUndefined &&
+		opts.HeaderLinesShape != tui.BorderNone {
+		return errors.New("--header-border=inline requires --header-lines-border to be inline or unset")
 	}
 
 	return nil
@@ -3626,6 +3685,10 @@ func noSeparatorLine(style infoStyle, separator bool) bool {
 
 func (opts *Options) useTmux() bool {
 	return opts.Tmux != nil && len(os.Getenv("TMUX")) > 0 && opts.Tmux.index >= opts.Height.index
+}
+
+func (opts *Options) useZellij() bool {
+	return opts.Tmux != nil && len(os.Getenv("ZELLIJ")) > 0 && opts.Tmux.index >= opts.Height.index
 }
 
 func (opts *Options) noSeparatorLine() bool {

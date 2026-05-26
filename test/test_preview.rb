@@ -383,6 +383,49 @@ class TestPreview < TestInteractive
     end
   end
 
+  def test_change_preview_window_preserves_wrap_toggle
+    # https://github.com/junegunn/fzf/issues/4791
+    tmux.send_keys "#{FZF} --preview 'for i in $(seq $FZF_PREVIEW_COLUMNS); do echo -n .; done; echo -n .; echo wrapped; echo 2nd line' " \
+                   "--preview-window 'right,nowrap,border-rounded' " \
+                   '--bind ctrl-w:toggle-preview-wrap ' \
+                   '--bind ctrl-r:change-preview-window:border-bold', :Enter
+    sleep(2)
+    # Initial: nowrap, rounded border. The long line is truncated; "wrapped" is hidden.
+    tmux.until do |lines|
+      assert_includes lines[2], '2nd line'
+      assert(lines.any? { it.include?('╭') })
+    end
+    # Toggle wrap on.
+    tmux.send_keys 'C-w'
+    tmux.until do |lines|
+      assert_includes lines[2], 'wrapped'
+      assert_includes lines[3], '2nd line'
+    end
+    # change-preview-window swaps the border to bold; wrap state must persist.
+    tmux.send_keys 'C-r'
+    tmux.until do |lines|
+      assert(lines.any? { it.include?('┏') })  # border actually changed
+      refute(lines.any? { it.include?('╭') })
+      assert_includes lines[2], 'wrapped'      # wrap was preserved
+      assert_includes lines[3], '2nd line'
+    end
+  end
+
+  def test_change_preview_window_overrides_wrap_explicitly
+    # When the new spec sets wrap/nowrap explicitly, it should still win.
+    tmux.send_keys "#{FZF} --preview 'for i in $(seq $FZF_PREVIEW_COLUMNS); do echo -n .; done; echo -n .; echo wrapped; echo 2nd line' " \
+                   "--preview-window 'right,wrap' " \
+                   '--bind ctrl-r:change-preview-window:nowrap', :Enter
+    # Initial: wrap is on.
+    tmux.until do |lines|
+      assert_includes lines[2], 'wrapped'
+      assert_includes lines[3], '2nd line'
+    end
+    # Explicit nowrap in the spec must override the (initially wrapped) state.
+    tmux.send_keys 'C-r'
+    tmux.until { |lines| assert_includes lines[2], '2nd line' }
+  end
+
   def test_preview_follow_wrap
     tmux.send_keys "seq 1 | #{FZF} --preview 'seq 1000' --preview-window right,2,follow,wrap", :Enter
     tmux.until { |lines| assert_equal 1, lines.match_count }
@@ -621,6 +664,22 @@ class TestPreview < TestInteractive
       assert_equal 1, lines.match_count
       assert_equal(2, lines.count { |line| line.include?('│ 1 │') })
       assert_equal(0, lines.count { |line| line.include?('│ h') })
+    end
+  end
+
+  def test_preview_toggle_should_redraw_scrollbar
+    tmux.send_keys %(seq 1 | #{FZF} --no-border --scrollbar --preview 'seq $((FZF_PREVIEW_LINES + 1))' --preview-border line --bind tab:toggle-preview --header foo --header-border --footer bar --footer-border), :Enter
+    tmux.until do |lines|
+      assert_equal 1, lines.match_count
+      assert_operator lines.count { |line| line.end_with?('│') }, :>, 2
+    end
+    tmux.send_keys :Tab
+    tmux.until do |lines|
+      assert_equal(2, lines.count { |line| line.end_with?('│') })
+    end
+    tmux.send_keys :Tab
+    tmux.until do |lines|
+      assert_operator lines.count { |line| line.end_with?('│') }, :>, 2
     end
   end
 end
