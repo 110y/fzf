@@ -2986,13 +2986,7 @@ func (t *Terminal) printInfoImpl() {
 		return true
 	}
 	printSpinner := func() {
-		if t.reading {
-			duration := int64(spinnerDuration)
-			idx := (time.Now().UnixNano() % (duration * int64(len(t.spinner)))) / duration
-			t.window.CPrint(tui.ColSpinner, t.spinner[idx])
-		} else {
-			t.window.Print(" ") // Clear spinner
-		}
+		t.window.Print(" ")
 	}
 	printInfoPrefix := func() {
 		str := t.infoPrefix
@@ -3004,11 +2998,7 @@ func (t *Terminal) printInfoImpl() {
 			width = maxWidth
 		}
 		move(line, pos, t.separatorLen == 0)
-		if t.reading {
-			t.window.CPrint(tui.ColSpinner, str)
-		} else {
-			t.window.CPrint(tui.ColPrompt, str)
-		}
+		t.window.CPrint(tui.ColPrompt, str)
 		pos += width
 	}
 	printSeparator := func(fillLength int, pad bool) {
@@ -3110,10 +3100,6 @@ func (t *Terminal) printInfoImpl() {
 
 	if t.infoStyle == infoRight {
 		maxWidth := t.window.Width() - 1
-		if t.reading {
-			// Need space for spinner and a margin column
-			maxWidth -= 2
-		}
 		var fillLength int
 		if outputPrinter == nil {
 			output = t.trimMessage(output, maxWidth)
@@ -3121,13 +3107,7 @@ func (t *Terminal) printInfoImpl() {
 		} else {
 			fillLength = t.window.Width() - outputLen - 2
 		}
-		if t.reading {
-			if fillLength >= 2 {
-				printSeparator(fillLength-2, true)
-			}
-			printSpinner()
-			t.window.Print(" ")
-		} else if fillLength >= 0 {
+		if fillLength >= 0 {
 			printSeparator(fillLength, true)
 		}
 		if outputPrinter == nil {
@@ -3167,11 +3147,6 @@ func (t *Terminal) printInfoImpl() {
 		t.window.CPrint(tui.ColInfo, output)
 	} else {
 		outputPrinter(t.window, maxWidth)
-	}
-	if t.infoStyle == infoInline && outputLen < maxWidth-1 && t.reading {
-		t.window.Print(" ")
-		printSpinner()
-		outputLen += 2
 	}
 
 	if t.infoStyle == infoInlineRight {
@@ -5677,18 +5652,6 @@ func (t *Terminal) Loop() error {
 			}()
 		}
 
-		// Keep the spinner spinning
-		go func() {
-			for t.running.Get() {
-				t.mutex.Lock()
-				reading := t.reading
-				t.mutex.Unlock()
-				time.Sleep(spinnerDuration)
-				if reading {
-					t.reqBox.Set(reqInfo, nil)
-				}
-			}
-		}()
 	}
 
 	if t.hasPreviewer() {
